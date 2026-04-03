@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Salsa On2 — Move Database</title>
+
+  <!-- React -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Firebase (compat SDK — v8-style API) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+
+  <!-- Tailwind -->
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+
+  <style>
+    * { box-sizing: border-box; }
+    body { background: #0f0f1a; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+
+    .line-clamp-2 {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    /* ── Flip card ── */
+    .flip-card { perspective: 1200px; }
+    .flip-card-inner {
+      position: relative;
+      width: 100%; height: 100%;
+      transition: transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+      transform-style: preserve-3d;
+    }
+    .flip-card-inner.flipped { transform: rotateY(180deg); }
+    .flip-card-front,
+    .flip-card-back {
+      position: absolute;
+      inset: 0;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      border-radius: 1rem;
+      overflow-y: auto;
+    }
+    .flip-card-back { transform: rotateY(180deg); }
+
+    /* ── Card hover ── */
+    .move-card { transition: transform 0.15s ease, border-color 0.15s ease; }
+    .move-card:hover { transform: translateY(-2px); }
+
+    /* ── Sync dot ── */
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .syncing { animation: pulse-dot 1s infinite; }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+    .auto-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      gap: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- ── Firebase initialisation (plain JS, before Babel) ── -->
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyC9IbKmAt4KoCMLYgnv9DAfC7tjEc2_gmo",
+      authDomain: "reclave-9.firebaseapp.com",
+      databaseURL: "https://reclave-9-default-rtdb.firebaseio.com",
+      projectId: "reclave-9",
+      storageBucket: "reclave-9.firebasestorage.app",
+      messagingSenderId: "52966441239",
+      appId: "1:52966441239:web:6d89dfbdef8f6b381ab752"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+  </script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    /* ═══════════════════════════════════════════════════════
+       SEED DATA  —  written to Firebase only if it's empty
+       ═══════════════════════════════════════════════════════ */
+    const SEED_MOVES = [
+      {
+        id: 'mambo-basic',
+        name: 'Mambo Basic (On2)',
+        description: 'The foundation of On2 salsa. Weight changes in place, with the break happening on beats 2 (forward) and 6 (back). Everything else grows from here.',
+        leadCues: 'Maintain frame throughout. Step slightly forward with left foot on 2 (forward break), replace right foot in place on 3. Step slightly back with right foot on 6 (back break), replace left foot in place on 7.\n\nKey: motion is in the legs, not the torso. Keep upper body still and connected.',
+        counts: '1: prep / weight shift\n2: ★ break FORWARD (L foot steps fwd)\n3: replace (R foot in place)\n4: hold\n5: prep / weight shift\n6: ★ break BACK (R foot steps back)\n7: replace (L foot in place)\n8: hold',
+        startPosition: 'open',
+        endPosition: 'open',
+        difficulty: 'beginner',
+        tags: ['beginner', 'basic', 'footwork', 'on2'],
+        nextMoves: ['cross-body-lead', 'right-turn-follower']
+      },
+      {
+        id: 'cross-body-lead',
+        name: 'Cross Body Lead (CBL)',
+        description: 'Lead redirects follower across the slot from one side to the other, stepping out of the way to create a lane. One of the core building blocks — most other moves connect through it.',
+        leadCues: 'On 1: step forward (signal / invasion of space).\nOn 2: break forward with L, begin guiding follower right with right hand.\nOn 3: side-step LEFT — this opens the slot and gets you out of the way.\nOn 5: step as follower starts to pass.\nOn 6: break back, guide follower across through the slot.\nOn 7: step behind follower into slot, you\'re now on their left.\n\nThe right hand guides — it does not push. Keep it supportive.',
+        counts: '1: step fwd (signal)\n2: ★ break fwd (L), guide R hand\n3: side-step left, open slot\n4: hold\n5: step, follower starts crossing\n6: ★ break, guide across\n7: step into slot behind follower\n8: hold',
+        startPosition: 'open',
+        endPosition: 'open',
+        difficulty: 'beginner',
+        tags: ['beginner', 'linear', 'slot', 'essential', 'redirecting'],
+        nextMoves: ['right-turn-follower', 'mambo-basic']
+      },
+      {
+        id: 'right-turn-follower',
+        name: "Right Turn (Follower's Right / CW)",
+        description: "Lead signals follower to turn clockwise (to follower's right). One of the most common turns in On2 salsa — essential to learn early.",
+        leadCues: 'From basic step in open hold:\nOn 5-6: raise right hand, creating a frame / arch above follower\'s head.\nOn 7: prep.\nOn the "&" before 1 (or on 1): initiate a gentle clockwise circular motion with the raised hand — this is the turn signal.\nOn 2-3: follower completes the turn.\n\nKey: keep elbow elevated for a clear frame. Do NOT push or spin. Guide with the frame and let the follower do the turning.',
+        counts: '5: raise right hand\n6: ★ break, frame the turn\n7: prep\n& (before 1): turn signal — hand circles clockwise\n1: follower begins turn\n2: ★ follower completes / back to basic\n3: replace\n4: hold',
+        startPosition: 'open',
+        endPosition: 'open',
+        difficulty: 'beginner',
+        tags: ['beginner', 'turn', 'clockwise', 'open-position'],
+        nextMoves: ['mambo-basic', 'cross-body-lead']
+      }
+    ];
+
+    /* ═══════════════════════════════════════════════════════
+       FIREBASE HELPERS
+       ═══════════════════════════════════════════════════════ */
+    const movesRef = db.ref('moves');
+
+    // Store moves as object keyed by ID (avoids Firebase array quirks)
+    function toFirebaseObj(moves) {
+      const obj = {};
+      moves.forEach(m => { obj[m.id] = m; });
+      return obj;
+    }
+
+    // Firebase converts JS arrays to {0: val, 1: val, ...} objects internally.
+    // normalizeMove converts them back so the rest of the app always sees real arrays.
+    function normalizeMove(m) {
+      if (!m || typeof m !== 'object') return null;
+      return {
+        ...m,
+        tags:      Array.isArray(m.tags)      ? m.tags      : Object.values(m.tags      || {}),
+        nextMoves: Array.isArray(m.nextMoves) ? m.nextMoves : Object.values(m.nextMoves || {}),
+      };
+    }
+
+    function fromFirebaseObj(obj) {
+      if (!obj || typeof obj !== 'object') return [];
+      return Object.values(obj).map(normalizeMove).filter(Boolean);
+    }
+
+    function writeToFirebase(moves) {
+      return movesRef.set(toFirebaseObj(moves));
+    }
+
+    function exportJSON(moves) {
+      const blob = new Blob([JSON.stringify(moves, null, 2)], { type: 'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const a    = Object.assign(document.createElement('a'), { href: url, download: 'salsa-moves.json' });
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function genId(name) {
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      return slug + '-' + Math.random().toString(36).slice(2, 6);
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       SHARED COMPONENTS
+       ═══════════════════════════════════════════════════════ */
+    function Tag({ label, active, onClick }) {
+      return (
+        <span
+          onClick={onClick}
+          className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium mr-1 mb-1 select-none ${
+            onClick ? 'cursor-pointer' : ''
+          } ${active ? 'bg-red-700 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}
+        >{label}</span>
+      );
+    }
+
+    const DIFF = {
+      beginner:     'text-green-400 bg-green-900',
+      intermediate: 'text-yellow-400 bg-yellow-900',
+      advanced:     'text-red-400 bg-red-900',
+    };
+    function DiffBadge({ level }) {
+      return (
+        <span className={`text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ${DIFF[level] || DIFF.beginner}`}>
+          {level}
+        </span>
+      );
+    }
+
+    function SectionBox({ title, children }) {
+      return (
+        <div className="bg-gray-800 rounded-xl p-5 mb-4 border border-gray-700">
+          <h3 className="text-red-500 text-xs font-bold uppercase tracking-widest mb-3">{title}</h3>
+          {children}
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       LIST VIEW
+       ═══════════════════════════════════════════════════════ */
+    function ListView({ moves, allTags, activeTags, toggleTag, clearTags, searchQuery, setSearchQuery, onSelectMove }) {
+      const filtered = moves.filter(m => {
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          if (
+            !m.name.toLowerCase().includes(q) &&
+            !m.description.toLowerCase().includes(q) &&
+            !m.tags.some(t => t.includes(q)) &&
+            !(m.leadCues || '').toLowerCase().includes(q)
+          ) return false;
+        }
+        if (activeTags.length > 0 && !activeTags.every(t => m.tags.includes(t))) return false;
+        return true;
+      });
+
+      return (
+        <div>
+          <div className="mb-4">
+            <input
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search moves, descriptions, tags, cues…"
+              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-red-600 placeholder-gray-600"
+            />
+          </div>
+
+          {allTags.length > 0 && (
+            <div className="mb-5 flex flex-wrap items-center">
+              {allTags.map(t => (
+                <Tag key={t} label={t} active={activeTags.includes(t)} onClick={() => toggleTag(t)} />
+              ))}
+              {activeTags.length > 0 && (
+                <button onClick={clearTags} className="text-xs text-gray-600 hover:text-gray-400 ml-1 mb-1">× clear</button>
+              )}
+            </div>
+          )}
+
+          <p className="text-gray-700 text-xs mb-4">
+            {filtered.length} of {moves.length} move{moves.length !== 1 ? 's' : ''}
+            {(searchQuery || activeTags.length > 0) ? ' (filtered)' : ''}
+          </p>
+
+          {filtered.length > 0 ? (
+            <div className="auto-grid">
+              {filtered.map(m => (
+                <div key={m.id} onClick={() => onSelectMove(m.id)}
+                  className="move-card bg-gray-800 rounded-xl p-4 cursor-pointer border border-gray-700 hover:border-red-700">
+                  <div className="flex justify-between items-start mb-2 gap-2">
+                    <h3 className="text-white font-semibold text-sm leading-snug">{m.name}</h3>
+                    <DiffBadge level={m.difficulty} />
+                  </div>
+                  <p className="text-gray-500 text-xs mb-3 line-clamp-2 leading-relaxed">{m.description}</p>
+                  <div className="flex flex-wrap">{m.tags.map(t => <Tag key={t} label={t} />)}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-24">
+              <p className="text-gray-500 text-lg mb-2">{moves.length === 0 ? 'No moves yet.' : 'No matches.'}</p>
+              <p className="text-gray-700 text-sm">
+                {moves.length === 0 ? 'Hit "+ Add Move" to log your first move.' : 'Try different search terms or clear your filters.'}
+              </p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       DETAIL VIEW
+       ═══════════════════════════════════════════════════════ */
+    function DetailView({ move, allMoves, onBack, onEdit, onDelete, onSelectMove }) {
+      const nextMoves = (move.nextMoves || []).map(id => allMoves.find(m => m.id === id)).filter(Boolean);
+      const prevMoves = allMoves.filter(m => (m.nextMoves || []).includes(move.id));
+
+      const LinkedMoveBtn = ({ m, arrow }) => (
+        <button onClick={() => onSelectMove(m.id)}
+          className="w-full text-left p-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm flex items-center justify-between group transition-colors">
+          <span className="text-white font-medium">{m.name}</span>
+          <span className="text-gray-600 group-hover:text-gray-400 text-xs">{arrow} {m.difficulty}</span>
+        </button>
+      );
+
+      return (
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center mb-6 gap-3">
+            <button onClick={onBack} className="text-gray-500 hover:text-white text-sm flex-shrink-0">← Back</button>
+            <h2 className="text-xl font-bold text-white flex-1">{move.name}</h2>
+            <DiffBadge level={move.difficulty} />
+          </div>
+
+          <SectionBox title="Description">
+            <p className="text-gray-300 text-sm leading-relaxed">{move.description}</p>
+          </SectionBox>
+
+          {move.leadCues && (
+            <SectionBox title="How to Lead It">
+              <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-line">{move.leadCues}</p>
+            </SectionBox>
+          )}
+
+          {move.counts && (
+            <SectionBox title="Counts / Timing">
+              <p className="text-gray-200 text-sm font-mono leading-loose whitespace-pre-line">{move.counts}</p>
+            </SectionBox>
+          )}
+
+          <SectionBox title="Details">
+            <div className="grid grid-cols-2 gap-y-2 text-sm mb-3">
+              <div><span className="text-gray-600">Start:</span> <span className="text-gray-300 capitalize">{move.startPosition}</span></div>
+              <div><span className="text-gray-600">End:</span> <span className="text-gray-300 capitalize">{move.endPosition}</span></div>
+            </div>
+            <div className="flex flex-wrap">{move.tags.map(t => <Tag key={t} label={t} />)}</div>
+          </SectionBox>
+
+          {nextMoves.length > 0 && (
+            <SectionBox title="Flows Into →">
+              <div className="space-y-2">{nextMoves.map(m => <LinkedMoveBtn key={m.id} m={m} arrow="→" />)}</div>
+            </SectionBox>
+          )}
+
+          {prevMoves.length > 0 && (
+            <SectionBox title="← Flows From">
+              <div className="space-y-2">{prevMoves.map(m => <LinkedMoveBtn key={m.id} m={m} arrow="←" />)}</div>
+            </SectionBox>
+          )}
+
+          <div className="flex gap-3 mt-2">
+            <button onClick={onEdit}
+              className="flex-1 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-xl text-sm font-medium transition-colors">
+              ✏️ Edit Move
+            </button>
+            <button onClick={() => { if (window.confirm(`Delete "${move.name}"? This cannot be undone.`)) onDelete(move.id); }}
+              className="py-2.5 px-5 bg-red-900 hover:bg-red-800 text-red-300 rounded-xl text-sm font-medium transition-colors">
+              Delete
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       FORM VIEW  (Add / Edit)
+       ═══════════════════════════════════════════════════════ */
+    function FormView({ initial, allMoves, onSave, onCancel }) {
+      const blank = { name:'', description:'', leadCues:'', counts:'', startPosition:'open', endPosition:'open', difficulty:'beginner', tags:[], nextMoves:[] };
+      const [form, setForm] = useState(initial ? { ...initial } : blank);
+      const [tagInput, setTagInput] = useState('');
+      const [errors, setErrors] = useState({});
+
+      const set = field => e => setForm(f => ({ ...f, [field]: e.target.value }));
+      const addTag = () => {
+        const t = tagInput.trim().toLowerCase().replace(/\s+/g, '-');
+        if (t && !form.tags.includes(t)) setForm(f => ({ ...f, tags: [...f.tags, t] }));
+        setTagInput('');
+      };
+      const toggleNext = id => setForm(f => ({
+        ...f,
+        nextMoves: f.nextMoves.includes(id) ? f.nextMoves.filter(n => n !== id) : [...f.nextMoves, id]
+      }));
+      const submit = () => {
+        const errs = {};
+        if (!form.name.trim()) errs.name = 'A name is required.';
+        if (!form.description.trim()) errs.description = 'A description is required.';
+        if (Object.keys(errs).length) { setErrors(errs); return; }
+        onSave({ ...form, id: form.id || genId(form.name) });
+      };
+
+      const inp = "w-full bg-gray-900 border border-gray-700 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:border-red-600 placeholder-gray-600";
+      const lbl = "block text-gray-500 text-xs mb-1.5 font-medium uppercase tracking-wide";
+      const others = allMoves.filter(m => m.id !== form.id);
+
+      return (
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center mb-6 gap-3">
+            <button onClick={onCancel} className="text-gray-500 hover:text-white text-sm">← Cancel</button>
+            <h2 className="text-xl font-bold text-white">{initial ? 'Edit Move' : 'Add New Move'}</h2>
+          </div>
+
+          <div className="space-y-5">
+            <div>
+              <label className={lbl}>Move Name *</label>
+              <input value={form.name} onChange={set('name')} className={inp} placeholder="e.g. Enchufla, Copa, Dile Que No…" />
+              {errors.name && <p className="text-red-400 text-xs mt-1">{errors.name}</p>}
+            </div>
+            <div>
+              <label className={lbl}>Description *</label>
+              <textarea value={form.description} onChange={set('description')} className={inp} rows={3}
+                placeholder="What does this move look like? How does it feel for the follower?" />
+              {errors.description && <p className="text-red-400 text-xs mt-1">{errors.description}</p>}
+            </div>
+            <div>
+              <label className={lbl}>How to Lead It</label>
+              <textarea value={form.leadCues} onChange={set('leadCues')} className={inp} rows={5}
+                placeholder="Frame, hand position, signals, body weight, what to watch for as lead…" />
+            </div>
+            <div>
+              <label className={lbl}>Counts / Timing</label>
+              <textarea value={form.counts} onChange={set('counts')} className={inp} rows={4}
+                placeholder={"1: prep\n2: ★ break fwd (L)\n3: replace\n4: hold\n…"} />
+              <p className="text-gray-700 text-xs mt-1">Any format works — one count per line is clear.</p>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {[['startPosition','Start Position'],['endPosition','End Position'],['difficulty','Difficulty']].map(([field, label]) => (
+                <div key={field}>
+                  <label className={lbl}>{label}</label>
+                  <select value={form[field]} onChange={set(field)} className={inp}>
+                    {field === 'difficulty'
+                      ? ['beginner','intermediate','advanced'].map(v => <option key={v} value={v}>{v}</option>)
+                      : ['open','closed','half-open','any'].map(v => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div>
+              <label className={lbl}>Tags</label>
+              <div className="flex gap-2 mb-2">
+                <input value={tagInput} onChange={e => setTagInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
+                  className={inp + ' flex-1'} placeholder="Type a tag and press Enter  (e.g. turn, dip, beginner…)" />
+                <button onClick={addTag} className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-xl text-sm transition-colors">Add</button>
+              </div>
+              <div className="flex flex-wrap">
+                {form.tags.map(t => (
+                  <span key={t} className="inline-flex items-center bg-gray-700 text-gray-300 rounded-full px-2 py-0.5 text-xs mr-1 mb-1">
+                    {t}
+                    <button onClick={() => setForm(f => ({ ...f, tags: f.tags.filter(x => x !== t) }))}
+                      className="ml-1 text-gray-500 hover:text-white leading-none">×</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+            {others.length > 0 && (
+              <div>
+                <label className={lbl}>Flows Into (Next Moves)</label>
+                <p className="text-gray-600 text-xs mb-2">Which moves connect naturally after this one?</p>
+                <div className="bg-gray-900 border border-gray-700 rounded-xl p-3 max-h-48 overflow-y-auto">
+                  {others.map(m => (
+                    <label key={m.id} className="flex items-center py-1.5 px-2 hover:bg-gray-800 rounded cursor-pointer">
+                      <input type="checkbox" checked={form.nextMoves.includes(m.id)} onChange={() => toggleNext(m.id)} className="mr-2.5" />
+                      <span className="text-sm text-gray-300">{m.name}</span>
+                      <span className="text-xs text-gray-600 ml-2">({m.difficulty})</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex gap-3 pt-2">
+              <button onClick={submit}
+                className="flex-1 py-2.5 bg-red-700 hover:bg-red-600 text-white rounded-xl font-semibold text-sm transition-colors">
+                {initial ? 'Save Changes' : '+ Add Move'}
+              </button>
+              <button onClick={onCancel}
+                className="py-2.5 px-5 bg-gray-700 hover:bg-gray-600 text-white rounded-xl text-sm transition-colors">Cancel</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       FLASHCARD VIEW
+       ═══════════════════════════════════════════════════════ */
+    function FlashcardView({ moves, onBack }) {
+      const shuffle = arr => [...arr].sort(() => Math.random() - 0.5);
+      const [deck, setDeck]           = useState(() => shuffle(moves));
+      const [idx, setIdx]             = useState(0);
+      const [flipped, setFlipped]     = useState(false);
+      const [known, setKnown]         = useState(new Set());
+      const [onlyUnknown, setOnlyUnknown] = useState(false);
+
+      const activeDeck = onlyUnknown ? deck.filter(m => !known.has(m.id)) : deck;
+      const move = activeDeck[idx];
+
+      const advance = (markKnown = false) => {
+        if (markKnown && move) setKnown(k => new Set([...k, move.id]));
+        setFlipped(false);
+        setTimeout(() => setIdx(i => i + 1), 300);
+      };
+
+      const restart = (keepKnown = false) => {
+        setDeck(shuffle(moves)); setIdx(0); setFlipped(false);
+        if (!keepKnown) setKnown(new Set());
+      };
+
+      if (moves.length === 0) return (
+        <div className="max-w-md mx-auto text-center py-24">
+          <p className="text-gray-500 text-lg">No moves to practice yet.</p>
+          <button onClick={onBack} className="mt-4 px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-xl text-sm">← Back</button>
+        </div>
+      );
+
+      if (!move) return (
+        <div className="max-w-md mx-auto text-center py-20">
+          <p className="text-5xl mb-4">🎉</p>
+          <p className="text-white text-xl font-bold mb-2">Deck complete!</p>
+          <p className="text-gray-500 text-sm mb-8">Marked as known: {known.size} / {moves.length}</p>
+          <div className="flex flex-col gap-3 items-center">
+            <button onClick={() => restart(false)}
+              className="px-8 py-2.5 bg-red-700 hover:bg-red-600 text-white rounded-xl font-medium text-sm">
+              🔀 Shuffle & Restart
+            </button>
+            {known.size > 0 && known.size < moves.length && (
+              <button onClick={() => { setOnlyUnknown(true); restart(true); }}
+                className="px-8 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-xl text-sm">
+                Practice unknowns only ({moves.length - known.size})
+              </button>
+            )}
+            <button onClick={onBack} className="text-gray-600 hover:text-gray-400 text-sm mt-2">← Back to Library</button>
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="max-w-md mx-auto">
+          <div className="flex items-center mb-4">
+            <button onClick={onBack} className="text-gray-500 hover:text-white text-sm mr-3">← Back</button>
+            <h2 className="text-lg font-bold text-white flex-1">Flashcard Practice</h2>
+            <span className="text-gray-600 text-xs">{idx + 1} / {activeDeck.length}</span>
+          </div>
+          <div className="w-full bg-gray-800 rounded-full h-1 mb-5">
+            <div className="bg-red-600 h-1 rounded-full transition-all duration-300"
+              style={{ width: `${((idx + 1) / activeDeck.length) * 100}%` }} />
+          </div>
+          <div className="flex items-center justify-between mb-4 text-xs text-gray-600">
+            <label className="flex items-center cursor-pointer select-none">
+              <input type="checkbox" checked={onlyUnknown}
+                onChange={e => { setOnlyUnknown(e.target.checked); setIdx(0); setFlipped(false); }}
+                className="mr-1.5" />
+              Unlearned only
+            </label>
+            <span className="text-green-700">✓ {known.size} known</span>
+            <button onClick={() => restart(true)} className="hover:text-gray-400 transition-colors">🔀 Shuffle</button>
+          </div>
+          <div className="flip-card w-full mb-5 cursor-pointer select-none" style={{ height: '320px' }}
+            onClick={() => setFlipped(f => !f)}>
+            <div className={`flip-card-inner ${flipped ? 'flipped' : ''}`}>
+              <div className="flip-card-front bg-gray-800 border-2 border-gray-700 flex flex-col items-center justify-center p-8 text-center">
+                <p className="text-gray-600 text-xs uppercase tracking-widest mb-5">Move name</p>
+                <h2 className="text-2xl font-bold text-white mb-3 leading-snug">{move.name}</h2>
+                <DiffBadge level={move.difficulty} />
+                <div className="mt-3 flex flex-wrap justify-center">{move.tags.map(t => <Tag key={t} label={t} />)}</div>
+                <p className="text-gray-700 text-xs mt-8">tap to reveal lead cues & counts ↓</p>
+              </div>
+              <div className="flip-card-back bg-gray-800 border-2 border-red-800 p-6">
+                {move.leadCues && (
+                  <>
+                    <p className="text-red-500 text-xs font-bold uppercase tracking-widest mb-2">How to Lead</p>
+                    <p className="text-gray-300 text-sm leading-relaxed mb-5 whitespace-pre-line">{move.leadCues}</p>
+                  </>
+                )}
+                {move.counts && (
+                  <>
+                    <p className="text-red-500 text-xs font-bold uppercase tracking-widest mb-2">Counts</p>
+                    <p className="text-gray-200 text-sm font-mono leading-loose whitespace-pre-line">{move.counts}</p>
+                  </>
+                )}
+                {!move.leadCues && !move.counts && (
+                  <p className="text-gray-600 text-sm text-center mt-16">No details yet — edit this move to add them.</p>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <button onClick={() => advance(false)}
+              className="py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-xl text-sm font-medium transition-colors">← Skip</button>
+            <button onClick={() => advance(false)}
+              className="py-3 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-xl text-sm font-medium transition-colors">Next →</button>
+            <button onClick={() => advance(true)}
+              className="py-3 bg-green-900 hover:bg-green-800 text-green-300 rounded-xl text-sm font-bold transition-colors">Got it ✓</button>
+          </div>
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       ERROR BOUNDARY  —  catches render crashes, shows recovery UI
+       ═══════════════════════════════════════════════════════ */
+    class ErrorBoundary extends React.Component {
+      constructor(props) { super(props); this.state = { crashed: false, error: null }; }
+      static getDerivedStateFromError(error) { return { crashed: true, error }; }
+      componentDidCatch(error, info) { console.error('App crashed:', error, info); }
+      render() {
+        if (!this.state.crashed) return this.props.children;
+        return (
+          <div className="min-h-screen flex flex-col items-center justify-center px-6 text-center" style={{ background: '#0f0f1a' }}>
+            <p className="text-4xl mb-4">⚠️</p>
+            <p className="text-white text-xl font-bold mb-2">Something went wrong</p>
+            <p className="text-gray-500 text-sm mb-2 max-w-sm">
+              {String(this.state.error?.message || 'Unknown error')}
+            </p>
+            <p className="text-gray-600 text-xs mb-8 max-w-sm">
+              This is usually caused by unexpected data from Firebase. You can try resetting the database to the starter moves, or reload and try again.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => {
+                  if (window.confirm('Reset the database to starter moves? This cannot be undone.')) {
+                    db.ref('moves').set(
+                      Object.fromEntries(SEED_MOVES.map(m => [m.id, m]))
+                    ).then(() => window.location.reload());
+                  }
+                }}
+                className="px-6 py-2 bg-red-700 hover:bg-red-600 text-white rounded-xl text-sm font-medium">
+                Reset to starter moves
+              </button>
+              <button onClick={() => window.location.reload()}
+                className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-xl text-sm">
+                Reload page
+              </button>
+            </div>
+          </div>
+        );
+      }
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       ROOT APP
+       ═══════════════════════════════════════════════════════ */
+    function App() {
+      const [moves, setMoves]           = useState([]);
+      const [loading, setLoading]       = useState(true);
+      const [syncState, setSyncState]   = useState('synced'); // synced | saving | error
+      const [view, setView]             = useState('list');
+      const [selectedId, setSelectedId] = useState(null);
+      const [editing, setEditing]       = useState(null);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [activeTags, setActiveTags]   = useState([]);
+      const fileRef = useRef();
+
+      /* ── Connect to Firebase ── */
+      useEffect(() => {
+        // On first ever load: seed Firebase if empty, migrating from localStorage if available
+        movesRef.once('value').then(snap => {
+          const cloud = snap.val();
+          if (!cloud || Object.keys(cloud).length === 0) {
+            let initial = SEED_MOVES;
+            try {
+              const local = localStorage.getItem('salsa_on2_db_v1');
+              if (local) {
+                const parsed = JSON.parse(local);
+                if (Array.isArray(parsed) && parsed.length > 0) initial = parsed;
+              }
+            } catch (_) {}
+            movesRef.set(toFirebaseObj(initial));
+          }
+        });
+
+        // Real-time listener — updates whenever any device changes the database
+        const onValue = snap => {
+          try {
+            const data = snap.val();
+            setMoves(data ? fromFirebaseObj(data) : []);
+            setSyncState('synced');
+          } catch (err) {
+            console.error('Error parsing Firebase data:', err);
+            setSyncState('error');
+          } finally {
+            setLoading(false);
+          }
+        };
+        const onError = err => {
+          console.error('Firebase read error:', err);
+          setSyncState('error');
+          setLoading(false);
+        };
+
+        movesRef.on('value', onValue, onError);
+        return () => movesRef.off('value', onValue);
+      }, []);
+
+      /* ── Write to Firebase (state updates via onValue listener) ── */
+      const persist = newMoves => {
+        setSyncState('saving');
+        writeToFirebase(newMoves).catch(err => {
+          console.error('Firebase write error:', err);
+          setSyncState('error');
+        });
+      };
+
+      const saveMove = move => {
+        const exists = moves.find(m => m.id === move.id);
+        persist(exists ? moves.map(m => m.id === move.id ? move : m) : [...moves, move]);
+        setSelectedId(move.id);
+        setEditing(null);
+        setView('detail');
+      };
+
+      const deleteMove = id => {
+        persist(moves.filter(m => m.id !== id));
+        setSelectedId(null);
+        setView('list');
+      };
+
+      const toggleTag = tag =>
+        setActiveTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+
+      const handleImport = e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+          try {
+            const data = JSON.parse(ev.target.result);
+            if (Array.isArray(data)) {
+              if (window.confirm(`Import ${data.length} moves? This replaces the current database for everyone with access.`)) {
+                persist(data);
+                setView('list');
+              }
+            } else alert('Invalid format — expected a JSON array.');
+          } catch { alert('Could not parse that file.'); }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+      };
+
+      const allTags     = [...new Set(moves.flatMap(m => m.tags))].sort();
+      const selectedMove = moves.find(m => m.id === selectedId);
+
+      /* ── Sync indicator dot ── */
+      const syncDot = {
+        synced: { cls: 'bg-green-500',  tip: 'Synced to cloud' },
+        saving: { cls: 'bg-yellow-400 syncing', tip: 'Saving…' },
+        error:  { cls: 'bg-red-500',    tip: 'Sync error — check connection' },
+      }[syncState];
+
+      /* ── Loading screen ── */
+      if (loading) return (
+        <div className="min-h-screen flex flex-col items-center justify-center" style={{ background: '#0f0f1a' }}>
+          <p className="text-5xl mb-4">🕺</p>
+          <p className="text-gray-500 text-sm">Connecting to database…</p>
+        </div>
+      );
+
+      return (
+        <div className="min-h-screen text-white" style={{ background: '#0f0f1a' }}>
+
+          {/* ── HEADER ── */}
+          <header className="border-b border-gray-800 sticky top-0 z-20"
+            style={{ background: 'rgba(15,15,26,0.95)', backdropFilter: 'blur(8px)' }}>
+            <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-2 flex-wrap">
+              <button onClick={() => setView('list')}
+                className="text-red-500 font-bold text-lg hover:text-red-400 transition-colors">
+                🕺 Salsa On2
+              </button>
+              {/* Cloud sync indicator */}
+              <span title={syncDot.tip} className={`inline-block w-2 h-2 rounded-full ml-1 ${syncDot.cls}`} />
+              <div className="flex-1" />
+              <button onClick={() => { setEditing(null); setView('form'); }}
+                className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white rounded-lg text-xs font-semibold transition-colors">
+                + Add Move
+              </button>
+              <button onClick={() => setView('flashcard')}
+                className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-xs font-medium transition-colors">
+                🃏 Practice
+              </button>
+              <button onClick={() => exportJSON(moves)} title="Download a JSON backup of all moves"
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-lg text-xs transition-colors">
+                ↓ Backup
+              </button>
+              <label title="Restore moves from a JSON backup"
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-lg text-xs cursor-pointer transition-colors">
+                ↑ Import
+                <input ref={fileRef} type="file" accept=".json" onChange={handleImport} className="hidden" />
+              </label>
+            </div>
+          </header>
+
+          {/* ── MAIN ── */}
+          <main className="max-w-4xl mx-auto px-4 py-6">
+            {view === 'list' && (
+              <ListView
+                moves={moves} allTags={allTags} activeTags={activeTags}
+                toggleTag={toggleTag} clearTags={() => setActiveTags([])}
+                searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+                onSelectMove={id => { setSelectedId(id); setView('detail'); }}
+              />
+            )}
+            {view === 'detail' && selectedMove && (
+              <DetailView
+                move={selectedMove} allMoves={moves}
+                onBack={() => setView('list')}
+                onEdit={() => { setEditing(selectedMove); setView('form'); }}
+                onDelete={deleteMove}
+                onSelectMove={id => { setSelectedId(id); setView('detail'); }}
+              />
+            )}
+            {view === 'form' && (
+              <FormView
+                initial={editing} allMoves={moves} onSave={saveMove}
+                onCancel={() => setView(selectedMove && editing ? 'detail' : 'list')}
+              />
+            )}
+            {view === 'flashcard' && (
+              <FlashcardView moves={moves} onBack={() => setView('list')} />
+            )}
+          </main>
+
+          <footer className="text-center text-gray-800 text-xs py-6">
+            {moves.length} move{moves.length !== 1 ? 's' : ''} · live-synced via Firebase
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      <ErrorBoundary><App /></ErrorBoundary>
+    );
+  </script>
+</body>
+</html>
